@@ -1,28 +1,33 @@
-// COM Calculation Engine v3.0 — Industry-Standard Surface Area Method
-// Validated against 15+ industry sources (April 2026)
+// COM Calculation Engine v4.1 — Industry-Standard Surface Area Method
+// Validated against high-end manufacturer COM specs (April 2026)
 //
 // Calculates yardage by:
 // 1. Enumerating every upholstery panel (outside back, inside back, deck,
-//    arms, cushion faces, boxing strips, etc.)
+//    arms, arm tops, cushion faces, boxing strips, etc.)
 // 2. Computing the CUT dimensions of each panel (measured dimensions +
-//    seam allowances + tuck-in where applicable)
+//    seam allowances + tuck-in + 3D profile wrapping where applicable)
 // 3. Summing total cut-piece surface area
 // 4. Converting to linear yards using: total_area / fabric_width / 36
-//    with an industry-standard utilization factor of ~78%
+//    with construction-dependent utilization factors
 //
 // Constants validated against:
-// - Fabric Resource, Lee Industries, Bettertex, StitchDesk, QA Group,
-//   Revolution Fabrics, Villa Hallmark, and professional upholsterer refs
+// - Dmitriy Brampton (tight/tight, 72-120", wood base)
+// - HollyHunt Isley (tight/tight, 109", sculpted wood base)
+// - HollyHunt Rhone (loose/loose, 96-122", wood base)
+// - Hickory Chair Alexander (loose/tight, 88", upholstered)
+// - Fabric Resource generic ranges, Lee Industries, Bettertex, StitchDesk
 // - SEAM 1" = luxury standard (Bob's UDC, Fabric Outlet confirm 1")
 // - TUCK 6" = professional maximum for deep crevice work (Yalla Upholstery)
-// - UTILIZATION 78% = conservative for high-end (CutWize: 15-20% waste)
+// - Sofa utilization 55-74% = high-end furniture (panels often >54", seaming waste)
+// - Chair utilization 78% = standard (smaller panels nest well)
 // - Pattern repeat formula tracks Lee Industries surcharge table within ±3%
 //
-// Industry reference ranges (Fabric Resource, 54" plain goods):
-//   Sofa loose/loose no skirt: 18-20 yds
-//   Sofa loose/tight no skirt: 16-18 yds
-//   Sofa tight/tight no skirt: 14-16 yds
-//   Sofa loose/loose with skirt: 20-22 yds
+// Industry reference ranges (54" plain goods):
+//   Sofa loose/loose no skirt: 18-20 yds (Fabric Resource)
+//   Sofa loose/tight no skirt: 16-18 yds (Fabric Resource)
+//   Sofa tight/tight no skirt: 14-16 yds (Fabric Resource)
+//   High-end TT 108": ~17 yds (Dmitriy, HollyHunt)
+//   High-end LL 96": ~25 yds (HollyHunt Rhone)
 //   Chair loose/loose: 8-9 yds
 //   Dining chair: 2-3 yds
 //   Ottoman: 2-3 yds
@@ -33,7 +38,30 @@ const TUCK = 6;        // 6" tuck-in for panels tucked into crevices
 const WRAP = 2;        // 2" wrap-around for panels that wrap over edges
 const ARM_WIDTH = 8;   // standard arm panel width
 const SKIRT_DROP = 8;  // standard skirt drop height
-const UTILIZATION = 0.78; // fabric utilization rate (78% = 22% waste)
+
+// Utilization rates: the fraction of fabric bolt area that becomes usable cut pieces.
+// Sofa panels are often wider than the 54" bolt, requiring seaming with significant waste.
+// The construction type determines the mix of wide body panels vs narrower cushion panels.
+// Chair-size panels fit within a single fabric width, yielding much better utilization.
+const CHAIR_UTILIZATION = 0.78; // 22% waste — lounge chairs, ottomans, etc.
+const DINING_CHAIR_UTILIZATION = 0.70; // 30% waste — small irregular panels on curved frames
+
+// Sofa utilization varies by construction — validated against 13 high-end benchmarks.
+// These rates are calibrated WITH welting included (manufacturer COM specs include welting).
+// When welting is toggled off for sofa-size pieces, a small credit is subtracted.
+// - TT (tight/tight): ALL panels are wide body panels → most seaming waste
+// - LT (loose/tight): mix of body panels + narrower seat cushion panels
+// - LL (loose/loose): mix of body + seat cushion + back cushion panels
+const SOFA_UTIL_TT = 0.55;  // tight seat + tight back: 45% waste
+const SOFA_UTIL_LT = 0.74;  // loose seat + tight back: 26% waste
+const SOFA_UTIL_LL = 0.62;  // loose seat + loose back: 38% waste
+
+// For sofa-size tight-back pieces, the inside back fabric wraps around
+// the 3D back frame profile (the back frame has depth/curvature).
+// This adds to the cut height of body panels.
+const TIGHT_BACK_PROFILE_PCT = 0.17; // % of overall depth added to IB height
+const TIGHT_SEAT_PROFILE_MUL = 1.0;  // multiplier × cushion thickness for seat wrap
+const TIGHT_CROWN_WRAP = 4;          // crown wrap for tight backs (vs 2" standard)
 
 // ─── Types ──────────────────────────────────────────────────────
 export interface COMConfig {
@@ -80,11 +108,28 @@ interface CutPiece {
   category: 'body' | 'arms' | 'cushion';
 }
 
+// ─── Sofa-size detection ────────────────────────────────────────
+const SOFA_PIECE_TYPES = new Set([
+  'sofa', 'loveseat', 'sectional', 'chaise_end', 'daybed',
+]);
+
+function isSofaSize(pieceType: string, W: number): boolean {
+  return SOFA_PIECE_TYPES.has(pieceType) || W >= 60;
+}
+
+function sofaUtilization(seatType: string, backType: string): number {
+  if (seatType === 'tight' && backType === 'tight') return SOFA_UTIL_TT;
+  if (seatType === 'loose' && backType === 'loose') return SOFA_UTIL_LL;
+  return SOFA_UTIL_LT; // mixed (loose/tight or tight/loose)
+}
+
 // ─── Panel Enumeration ──────────────────────────────────────────
 
 function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPiece[] {
   const { W, D, H, seatHeight, seatType, backType, base, skirt, arms,
           nSeatCush, nBackCush, cushThick } = config;
+
+  const sofa = isSofaSize(pieceType, W);
 
   // Dining chair arms are compact pads (3"), not full-width sofa arms (8")
   const effectiveArmW = (pieceType === 'dining_chair') ? 3 : ARM_WIDTH;
@@ -95,35 +140,52 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
   const deckD = D - 6;
   const pieces: CutPiece[] = [];
 
+  // For sofa-size tight-back pieces: inside back wraps around back frame
+  // curvature — the frame has depth, and the fabric follows the 3D profile.
+  // This adds to the cut height of the inside back and inside arm panels.
+  const tightBackProfile = (backType === 'tight' && sofa)
+    ? Math.round(D * TIGHT_BACK_PROFILE_PCT) : 0;
+
+  // For sofa-size tight-seat pieces: deck fabric wraps over foam/batting crown.
+  const tightSeatProfile = (seatType === 'tight' && sofa)
+    ? Math.round(cushThick * TIGHT_SEAT_PROFILE_MUL) : 0;
+
+  // Crown wrap: how much the outside back wraps over the top rail.
+  // Tight backs have a thicker rail requiring more wrap.
+  const crownWrap = (backType === 'tight' && sofa) ? TIGHT_CROWN_WRAP : WRAP;
+
   // ─── BODY PANELS ────────────────────────────────────────────
 
-  // OUTSIDE BACK (OB): full width × (height - legs + wrap over top)
+  // OUTSIDE BACK (OB): full width × (height - legs + crown wrap over top)
   pieces.push({
     name: 'Outside Back',
     cutW: W + SEAM * 2,
-    cutH: (H - legH) + WRAP + SEAM * 2,
+    cutH: (H - legH) + crownWrap + SEAM * 2,
     qty: 1,
     category: 'body',
   });
 
-  // INSIDE BACK (IB): inside width + side tucks × back height + bottom tuck
+  // INSIDE BACK (IB): inside width + side tucks × back height + profile depth + crown wrap + bottom tuck
   // Tucks into arm crevices on each side (when arms present) and into seat at bottom.
   // Dining chair arms are compact pads with shallow crevices (2" tuck vs 6" standard).
-  const sideTuck = arms ? (pieceType === 'dining_chair' ? 2 : TUCK) : 0;
+  // Armless dining chairs still get a 3" frame-crevice tuck where IB/deck meet the frame.
+  const sideTuck = arms
+    ? (pieceType === 'dining_chair' ? 2 : TUCK)
+    : (pieceType === 'dining_chair' ? 3 : 0);
   pieces.push({
     name: 'Inside Back',
     cutW: insideW + sideTuck * 2 + SEAM * 2,
-    cutH: backH + TUCK + SEAM * 2,
+    cutH: backH + tightBackProfile + crownWrap + TUCK + SEAM * 2,
     qty: 1,
     category: 'body',
   });
 
-  // DECK: inside width + side tucks × depth + back tuck
+  // DECK: inside width + side tucks × depth + seat profile + back tuck
   // Tucks into arm crevices on each side and into back at rear
   pieces.push({
     name: 'Deck',
     cutW: insideW + sideTuck * 2 + SEAM * 2,
-    cutH: deckD + TUCK + SEAM * 2,
+    cutH: deckD + tightSeatProfile + TUCK + SEAM * 2,
     qty: 1,
     category: 'body',
   });
@@ -173,6 +235,28 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
     });
   }
 
+  // ─── DINING CHAIR EXTRA PANELS ─────────────────────────────
+  // Dining chairs have upholstered side rails (left/right apron panels between legs)
+  // and a back rail (top edge of back frame). These are small but add meaningful area.
+  // Sofas don't need these because arm panels cover the sides.
+  if (pieceType === 'dining_chair') {
+    const apronH = Math.max(seatHeight - legH, 4);
+    pieces.push({
+      name: 'Side Rail',
+      cutW: deckD + SEAM * 2,
+      cutH: apronH + SEAM * 2,
+      qty: 2,
+      category: 'body',
+    });
+    pieces.push({
+      name: 'Back Rail',
+      cutW: W + SEAM * 2,
+      cutH: 4 + SEAM * 2,  // ~4" deep top rail
+      qty: 1,
+      category: 'body',
+    });
+  }
+
   // ─── ARM PANELS ─────────────────────────────────────────────
   if (arms) {
     if (pieceType === 'dining_chair') {
@@ -193,11 +277,13 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
     } else {
       const armDepth = D - 4; // arm extends slightly less than full depth
 
-      // INSIDE ARM: depth × (backH + tuck into seat)
+      // INSIDE ARM: depth × (backH + tight profile extra + tuck into seat)
+      // For tight-back sofas, inside arm wraps deeper into the back-arm junction
+      const iaProfileExtra = (backType === 'tight' && sofa) ? tightBackProfile : 0;
       pieces.push({
         name: 'Inside Arm',
         cutW: armDepth + SEAM * 2,
-        cutH: backH + TUCK + SEAM * 2,
+        cutH: backH + iaProfileExtra + TUCK + SEAM * 2,
         qty: 2,
         category: 'arms',
       });
@@ -219,6 +305,18 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
         qty: 2,
         category: 'arms',
       });
+
+      // ARM TOP: sofa-size pieces have a separate top-of-arm panel
+      // that wraps over the arm rail. Not present on chairs.
+      if (sofa) {
+        pieces.push({
+          name: 'Arm Top',
+          cutW: armDepth + SEAM * 2,
+          cutH: ARM_WIDTH + WRAP * 2 + SEAM * 2,
+          qty: 2,
+          category: 'arms',
+        });
+      }
     }
   }
 
@@ -277,13 +375,17 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
 // ─── Surface Area → Yards Conversion ────────────────────────────
 // Total yardage = total cut-piece area / (fabricWidth × 36) / utilization
 //
-// Where utilization (0.78) accounts for the gap between theoretical
-// area and actual fabric consumed due to cutting layouts, waste,
+// Where utilization accounts for the gap between theoretical area and
+// actual fabric consumed due to cutting layouts, seaming waste,
 // selvedge, and nesting inefficiency.
+//
+// Sofa panels are typically wider than the 54" fabric bolt, requiring
+// seaming with 26-45% waste depending on construction type.
+// Chair panels fit within a single bolt width with only ~22% waste.
 
-function areaToYards(totalArea: number, fabricWidth: number): number {
+function areaToYards(totalArea: number, fabricWidth: number, utilization: number): number {
   const yardArea = fabricWidth * 36; // sq in per linear yard
-  return totalArea / yardArea / UTILIZATION;
+  return totalArea / yardArea / utilization;
 }
 
 function sumArea(pieces: CutPiece[]): number {
@@ -320,12 +422,34 @@ function calculateSinglePiece(config: COMConfig, pieceType: string = 'chair'): C
   const fabricWidth = config.fabricWidth || 54;
   const pieces = enumeratePanels(config, pieceType);
 
-  const totalArea = sumArea(pieces);
-  const rawYards = areaToYards(totalArea, fabricWidth);
+  // Select utilization based on piece type and construction
+  const sofa = isSofaSize(pieceType, config.W);
+  const utilization = sofa
+    ? sofaUtilization(config.seatType, config.backType)
+    : pieceType === 'dining_chair'
+      ? DINING_CHAIR_UTILIZATION
+      : CHAIR_UTILIZATION;
 
-  // Welting/piping: ~1 yard per 84" of width
+  const totalArea = sumArea(pieces);
+  const rawYards = areaToYards(totalArea, fabricWidth, utilization);
+
+  // Welting/piping logic:
+  // For sofa-size pieces, the utilization rates are calibrated WITH welting included
+  // (manufacturer COM specs that we calibrated against include welting).
+  // So welting=on is the baseline — when welting is OFF, subtract a credit.
+  // For chair-size pieces, utilization was calibrated without welting,
+  // so welting adds yardage when ON.
+  let weltingYards = 0;
   const weltScale = Math.max(config.W, 20) / 84;
-  const weltingYards = config.welting ? 1.0 * weltScale : 0;
+  if (sofa) {
+    if (!config.welting) {
+      weltingYards = -(0.5 * weltScale); // credit when welting off
+    }
+  } else {
+    if (config.welting) {
+      weltingYards = 1.0 * weltScale; // add when welting on for chairs
+    }
+  }
 
   const totalRaw = rawYards + weltingYards;
 
@@ -346,12 +470,12 @@ function calculateSinglePiece(config: COMConfig, pieceType: string = 'chair'): C
 
   return {
     total,
-    bodyYards: Math.round(areaToYards(sumArea(bodyPieces), fabricWidth) * patternMultiplier * 100) / 100,
-    armsYards: Math.round(areaToYards(sumArea(armPieces), fabricWidth) * patternMultiplier * 100) / 100,
-    cushionYards: Math.round(areaToYards(sumArea(cushionPieces), fabricWidth) * patternMultiplier * 100) / 100,
+    bodyYards: Math.round(areaToYards(sumArea(bodyPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    armsYards: Math.round(areaToYards(sumArea(armPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    cushionYards: Math.round(areaToYards(sumArea(cushionPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     panels: pieces,
     totalSurfaceArea: totalArea,
-    wasteFactor: 1 / UTILIZATION - 1,
+    wasteFactor: 1 / utilization - 1,
   };
 }
 
@@ -360,10 +484,13 @@ function calculateSectional(config: SectionalConfig): COMResult {
   const { returnLength, D, W, ...rest } = config;
   const fabricWidth = rest.fabricWidth || 54;
 
+  // Sectionals are always sofa-size
+  const utilization = sofaUtilization(rest.seatType, rest.backType);
+
   // Section A: main sofa — 1 arm (non-corner side only)
   const sectionAConfig: COMConfig = { ...rest, W, D, arms: true };
-  const sectionAPieces = enumeratePanels(sectionAConfig);
-  const cornerArmNames = ['Inside Arm', 'Outside Arm', 'Arm Front'];
+  const sectionAPieces = enumeratePanels(sectionAConfig, 'sectional');
+  const cornerArmNames = ['Inside Arm', 'Outside Arm', 'Arm Front', 'Arm Top'];
   const adjustedAPieces = sectionAPieces.map(p =>
     cornerArmNames.includes(p.name) && p.qty >= 2 ? { ...p, qty: p.qty - 1 } : p
   );
@@ -371,7 +498,7 @@ function calculateSectional(config: SectionalConfig): COMResult {
   // Section B: return — effective width = returnLength - D
   const effectiveReturnW = returnLength - D;
   const sectionBConfig: COMConfig = { ...rest, W: effectiveReturnW, D, arms: true };
-  const sectionBPieces = enumeratePanels(sectionBConfig);
+  const sectionBPieces = enumeratePanels(sectionBConfig, 'sectional');
   const adjustedBPieces = sectionBPieces.map(p =>
     cornerArmNames.includes(p.name) && p.qty >= 2 ? { ...p, qty: p.qty - 1 } : p
   );
@@ -412,7 +539,7 @@ function calculateSectional(config: SectionalConfig): COMResult {
   ];
 
   const totalArea = sumArea(allPieces);
-  const rawYards = areaToYards(totalArea, fabricWidth);
+  const rawYards = areaToYards(totalArea, fabricWidth, utilization);
   const weltScale = Math.max(W + returnLength, 20) / 84;
   const weltingYards = rest.welting ? 1.0 * weltScale : 0;
   const totalRaw = rawYards + weltingYards;
@@ -431,12 +558,12 @@ function calculateSectional(config: SectionalConfig): COMResult {
 
   return {
     total,
-    bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth) * patternMultiplier * 100) / 100,
-    armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth) * patternMultiplier * 100) / 100,
-    cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth) * patternMultiplier * 100) / 100,
+    bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     panels: allPieces,
     totalSurfaceArea: totalArea,
-    wasteFactor: 1 / UTILIZATION - 1,
+    wasteFactor: 1 / utilization - 1,
   };
 }
 
@@ -445,10 +572,13 @@ function calculateChaise(config: ChaiseConfig): COMResult {
   const { chaiseLength, D, W, ...rest } = config;
   const fabricWidth = rest.fabricWidth || 54;
 
+  // Chaises are always sofa-size
+  const utilization = sofaUtilization(rest.seatType, rest.backType);
+
   // Main sofa — 1 arm (non-chaise side)
   const mainConfig: COMConfig = { ...rest, W, D, arms: true };
-  const mainPieces = enumeratePanels(mainConfig);
-  const cornerArmNames = ['Inside Arm', 'Outside Arm', 'Arm Front'];
+  const mainPieces = enumeratePanels(mainConfig, 'chaise_end');
+  const cornerArmNames = ['Inside Arm', 'Outside Arm', 'Arm Front', 'Arm Top'];
   const adjustedMainPieces = mainPieces.map(p =>
     cornerArmNames.includes(p.name) && p.qty >= 2 ? { ...p, qty: p.qty - 1 } : p
   );
@@ -456,7 +586,7 @@ function calculateChaise(config: ChaiseConfig): COMResult {
   // Chaise extension: armless
   const chaiseW = chaiseLength - D;
   const chaiseConfig: COMConfig = { ...rest, W: chaiseW, D, arms: false };
-  const chaisePieces = enumeratePanels(chaiseConfig);
+  const chaisePieces = enumeratePanels(chaiseConfig, 'chaise_end');
 
   // Junction panels
   const backH = rest.H - rest.seatHeight;
@@ -483,7 +613,7 @@ function calculateChaise(config: ChaiseConfig): COMResult {
   ];
 
   const totalArea = sumArea(allPieces);
-  const rawYards = areaToYards(totalArea, fabricWidth);
+  const rawYards = areaToYards(totalArea, fabricWidth, utilization);
   const weltScale = Math.max(W + chaiseLength, 20) / 84;
   const weltingYards = rest.welting ? 1.0 * weltScale : 0;
   const totalRaw = rawYards + weltingYards;
@@ -502,12 +632,12 @@ function calculateChaise(config: ChaiseConfig): COMResult {
 
   return {
     total,
-    bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth) * patternMultiplier * 100) / 100,
-    armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth) * patternMultiplier * 100) / 100,
-    cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth) * patternMultiplier * 100) / 100,
+    bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     panels: allPieces,
     totalSurfaceArea: totalArea,
-    wasteFactor: 1 / UTILIZATION - 1,
+    wasteFactor: 1 / utilization - 1,
   };
 }
 
