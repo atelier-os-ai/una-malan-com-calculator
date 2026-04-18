@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { calculateCOM, buildRulesMap, type COMConfig, type COMResult } from "@/lib/comEngine";
 import { getSettings } from "@/pages/settings";
-import type { Piece, EngineRule } from "@shared/schema";
+import { pieceTypeToGroupId, type Piece, type EngineRule } from "@shared/schema";
 
 // Shared load-piece signal: set by Library, consumed by Calculator
 let _pendingLoadId: number | null = null;
@@ -455,10 +455,10 @@ export default function CalculatorPage() {
     return cfg;
   }, [form]);
 
-  // Fetch live rules from backend — always refetch when Calculator mounts
-  // so changes made on the Rules page are picked up immediately
+  // Fetch live rules for the active piece type group
+  const activeGroupId = pieceTypeToGroupId(form.type);
   const { data: rulesData } = useQuery<EngineRule[]>({
-    queryKey: ["/api/rules"],
+    queryKey: ["/api/rules/group", activeGroupId],
     staleTime: 0,
     refetchOnMount: "always",
   });

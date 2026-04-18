@@ -52,6 +52,7 @@ export async function registerRoutes(
   });
 
   // ─── Engine Rules ────────────────────────────────────────────
+  // Get all rules (for overview or migration)
   app.get("/api/rules", async (_req, res) => {
     try {
       const rules = await storage.getAllRules();
@@ -61,13 +62,24 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/rules/:key", async (req, res) => {
+  // Get rules for a specific piece type group
+  app.get("/api/rules/group/:groupId", async (req, res) => {
+    try {
+      const rules = await storage.getRulesByGroup(req.params.groupId);
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch group rules" });
+    }
+  });
+
+  // Update a rule within a specific group
+  app.patch("/api/rules/group/:groupId/:key", async (req, res) => {
     try {
       const { value } = req.body;
       if (typeof value !== "number") {
         return res.status(400).json({ message: "Value must be a number" });
       }
-      const updated = await storage.updateRule(req.params.key, value);
+      const updated = await storage.updateRule(req.params.key, req.params.groupId, value);
       if (!updated) {
         return res.status(404).json({ message: "Rule not found" });
       }
@@ -77,9 +89,38 @@ export async function registerRoutes(
     }
   });
 
+  // Legacy: update rule by key only (updates first match — compat)
+  app.patch("/api/rules/:key", async (req, res) => {
+    try {
+      const { value, groupId } = req.body;
+      if (typeof value !== "number") {
+        return res.status(400).json({ message: "Value must be a number" });
+      }
+      const group = groupId || "sofa_loveseat";
+      const updated = await storage.updateRule(req.params.key, group, value);
+      if (!updated) {
+        return res.status(404).json({ message: "Rule not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update rule" });
+    }
+  });
+
+  // Reset a specific group to defaults
+  app.post("/api/rules/reset/:groupId", async (req, res) => {
+    try {
+      const rules = await storage.resetGroupRules(req.params.groupId);
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to reset group rules" });
+    }
+  });
+
+  // Reset all rules to defaults
   app.post("/api/rules/reset", async (_req, res) => {
     try {
-      const rules = await storage.resetRules();
+      const rules = await storage.resetAllRules();
       res.json(rules);
     } catch (error) {
       res.status(500).json({ message: "Failed to reset rules" });

@@ -1,9 +1,14 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { EngineRule } from "@shared/schema";
+import { PIECE_TYPE_GROUPS, getDefaultValue, type EngineRule } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useCallback } from "react";
-import { RotateCcw, Info, Check } from "lucide-react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import {
+  RotateCcw, Info, Armchair, Sofa, LayoutGrid,
+  RectangleHorizontal, UtensilsCrossed, Square,
+  BedDouble, PanelTop, Archive, PanelBottom,
+  Heart, TreePalm,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
@@ -24,6 +29,23 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// ─── Group icons ─────────────────────────────────────────────────
+const GROUP_ICONS: Record<string, any> = {
+  sofa_loveseat: Sofa,
+  sectional: LayoutGrid,
+  chaise: RectangleHorizontal,
+  daybed: BedDouble,
+  chair: Armchair,
+  dining_chair: UtensilsCrossed,
+  ottoman: Square,
+  bench: Archive,
+  upholstered_bed: BedDouble,
+  headboard: PanelTop,
+  drawer_fronts: PanelBottom,
+  outdoor_cushions: TreePalm,
+};
+
+// ─── Category metadata ───────────────────────────────────────────
 const CATEGORY_META: Record<string, { label: string; description: string }> = {
   allowances: {
     label: "Allowances",
@@ -47,6 +69,11 @@ const CATEGORY_META: Record<string, { label: string; description: string }> = {
     description:
       "Extra fabric for 3D profile wrapping on tight seat/back pieces",
   },
+  piece_defaults: {
+    label: "Piece Defaults",
+    description:
+      "Default arm count, arm length, and back style for this piece type. Calculator pre-fills these values.",
+  },
 };
 
 const CATEGORY_ORDER = [
@@ -55,6 +82,7 @@ const CATEGORY_ORDER = [
   "welting",
   "utilization",
   "tight_construction",
+  "piece_defaults",
 ];
 
 function formatValue(rule: EngineRule, val: number): string {
@@ -64,7 +92,6 @@ function formatValue(rule: EngineRule, val: number): string {
   if (rule.unit === "×") {
     return `${val.toFixed(1)}×`;
   }
-  // For regular numbers, show appropriate precision
   if (Number.isInteger(val)) return `${val}`;
   if (rule.step >= 1) return `${Math.round(val)}`;
   return `${val}`;
@@ -74,27 +101,42 @@ function formatWaste(val: number): string {
   return `${Math.round((1 - val) * 100)}% waste`;
 }
 
+// ─── Back Style display ──────────────────────────────────────────
+function formatBackStyle(val: number): string {
+  if (val >= 1) return "Full";
+  if (val >= 0.5) return "Partial";
+  return "None";
+}
+
+// ─── Rule Row ────────────────────────────────────────────────────
 function RuleRow({
   rule,
-  defaultValue,
+  groupId,
 }: {
   rule: EngineRule;
-  defaultValue: number | undefined;
+  groupId: string;
 }) {
   const { toast } = useToast();
   const [localValue, setLocalValue] = useState(rule.value);
   const [editingInput, setEditingInput] = useState(false);
   const [inputText, setInputText] = useState("");
-  const isModified = defaultValue !== undefined && rule.value !== defaultValue;
+  const defaultVal = getDefaultValue(rule.key, groupId);
+  const isModified = defaultVal !== undefined && rule.value !== defaultVal;
+
+  // Sync local value when rule changes from server
+  useEffect(() => {
+    setLocalValue(rule.value);
+  }, [rule.value]);
 
   const mutation = useMutation({
     mutationFn: async (value: number) => {
-      const res = await apiRequest("PATCH", `/api/rules/${rule.key}`, {
+      const res = await apiRequest("PATCH", `/api/rules/group/${groupId}/${rule.key}`, {
         value,
       });
       return res.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rules/group", groupId] });
       queryClient.invalidateQueries({ queryKey: ["/api/rules"] });
       toast({
         description: `${rule.label} updated`,
@@ -141,9 +183,11 @@ function RuleRow({
     setEditingInput(false);
   }, [inputText, commitValue]);
 
+  // Special display for back style
+  const isBackStyle = rule.key === "DEFAULT_BACK_STYLE";
+
   return (
     <div className="group grid grid-cols-[1fr_auto_auto] items-center gap-4 py-3 px-4 rounded-lg hover:bg-muted/30 transition-colors">
-      {/* Label + description */}
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-foreground">
@@ -165,7 +209,6 @@ function RuleRow({
         </div>
       </div>
 
-      {/* Slider */}
       <div className="w-[180px]">
         <Slider
           value={[localValue]}
@@ -178,7 +221,6 @@ function RuleRow({
         />
       </div>
 
-      {/* Value display */}
       <div className="w-[80px] text-right">
         {editingInput ? (
           <Input
@@ -202,11 +244,17 @@ function RuleRow({
             }}
             data-testid={`value-${rule.key}`}
           >
-            {formatValue(rule, localValue)}
-            {rule.unit === "%" && (
-              <span className="text-[10px] text-muted-foreground/60 ml-1.5">
-                {formatWaste(localValue)}
-              </span>
+            {isBackStyle ? (
+              <span>{formatBackStyle(localValue)}</span>
+            ) : (
+              <>
+                {formatValue(rule, localValue)}
+                {rule.unit === "%" && (
+                  <span className="text-[10px] text-muted-foreground/60 ml-1.5">
+                    {formatWaste(localValue)}
+                  </span>
+                )}
+              </>
             )}
           </button>
         )}
@@ -215,56 +263,45 @@ function RuleRow({
   );
 }
 
+// ─── Main Rules Page ─────────────────────────────────────────────
 export default function RulesPage() {
   const { toast } = useToast();
+  const [activeGroup, setActiveGroup] = useState<string>("sofa_loveseat");
 
   const { data: rules = [], isLoading } = useQuery<EngineRule[]>({
-    queryKey: ["/api/rules"],
+    queryKey: ["/api/rules/group", activeGroup],
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const resetMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/rules/reset");
+      const res = await apiRequest("POST", `/api/rules/reset/${activeGroup}`);
       return res.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rules/group", activeGroup] });
       queryClient.invalidateQueries({ queryKey: ["/api/rules"] });
-      toast({ description: "All rules reset to defaults" });
+      toast({ description: `Rules reset to defaults for ${PIECE_TYPE_GROUPS.find(g => g.id === activeGroup)?.label}` });
     },
   });
 
-  // Build a default value lookup from DEFAULT_RULES (imported in schema)
-  // We'll match by key from the rules data itself — initial load has the defaults
-  const defaultMap = new Map<string, number>();
-  // We need DEFAULT_RULES from schema — let's import statically
-  // For now we'll track defaults from the first load
-  const DEFAULTS: Record<string, number> = {
-    SEAM: 1,
-    TUCK: 6,
-    WRAP: 2,
-    ARM_WIDTH: 8,
-    SKIRT_DROP: 8,
-    SKIRT_HEM: 2,
-    SKIRT_PLEAT_MULTIPLIER: 1.5,
-    WELT_BIAS_YIELD_FT_PER_YD: 78,
-    WELT_MIN_YARDS: 0.5,
-    CHAIR_UTILIZATION: 0.78,
-    DINING_CHAIR_UTILIZATION: 0.7,
-    SOFA_UTIL_TT: 0.55,
-    SOFA_UTIL_LT: 0.74,
-    SOFA_UTIL_LL: 0.62,
-    TIGHT_BACK_PROFILE_PCT: 0.17,
-    TIGHT_SEAT_PROFILE_MUL: 1.0,
-    TIGHT_CROWN_WRAP: 4,
-  };
+  const grouped = useMemo(() => {
+    return CATEGORY_ORDER.map((cat) => ({
+      key: cat,
+      ...(CATEGORY_META[cat] || { label: cat, description: "" }),
+      rules: rules.filter((r) => r.category === cat),
+    })).filter((g) => g.rules.length > 0);
+  }, [rules]);
 
-  const grouped = CATEGORY_ORDER.map((cat) => ({
-    key: cat,
-    ...CATEGORY_META[cat],
-    rules: rules.filter((r) => r.category === cat),
-  })).filter((g) => g.rules.length > 0);
+  const hasModified = useMemo(() => {
+    return rules.some((r) => {
+      const def = getDefaultValue(r.key, activeGroup);
+      return def !== undefined && r.value !== def;
+    });
+  }, [rules, activeGroup]);
 
-  const hasModified = rules.some((r) => DEFAULTS[r.key] !== undefined && r.value !== DEFAULTS[r.key]);
+  const activeGroupMeta = PIECE_TYPE_GROUPS.find(g => g.id === activeGroup);
 
   if (isLoading) {
     return (
@@ -283,80 +320,127 @@ export default function RulesPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-lg tracking-wide" data-testid="text-rules-title">
-            Engine Rules
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Adjust calculation constants live. Changes apply immediately to the
-            calculator.
-          </p>
+    <div className="flex h-full">
+      {/* Group selector sidebar */}
+      <div className="w-[200px] border-r flex flex-col py-4 shrink-0 overflow-y-auto">
+        <div className="px-4 mb-3">
+          <h3 className="text-[10px] uppercase tracking-[0.2em] font-medium text-muted-foreground">
+            Piece Types
+          </h3>
         </div>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!hasModified}
-              className="gap-1.5"
-              data-testid="button-reset-rules"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset All
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Reset all rules to defaults?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will revert every rule to its original industry-standard
-                value. Any adjustments will be lost.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => resetMutation.mutate()}
-                data-testid="button-confirm-reset"
+        <nav className="space-y-0.5 px-2">
+          {PIECE_TYPE_GROUPS.map((group) => {
+            const Icon = GROUP_ICONS[group.id] || Square;
+            const isActive = activeGroup === group.id;
+            return (
+              <button
+                key={group.id}
+                onClick={() => setActiveGroup(group.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-left text-sm transition-colors ${
+                  isActive
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                }`}
+                data-testid={`group-${group.id}`}
               >
-                Reset
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="truncate text-xs">{group.label}</span>
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
-      {/* Rule sections */}
-      {grouped.map((group) => (
-        <section key={group.key} data-testid={`section-${group.key}`}>
-          <div className="mb-3">
-            <h2 className="text-xs uppercase tracking-[0.2em] font-medium text-muted-foreground">
-              {group.label}
-            </h2>
-            <p className="text-[11px] text-muted-foreground/60 mt-0.5">
-              {group.description}
-            </p>
+      {/* Rules content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-6 max-w-3xl mx-auto space-y-8">
+          {/* Header */}
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="font-display text-lg tracking-wide" data-testid="text-rules-title">
+                {activeGroupMeta?.label || "Rules"}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Adjust calculation constants for{" "}
+                <span className="text-foreground font-medium">
+                  {activeGroupMeta?.label?.toLowerCase()}
+                </span>{" "}
+                pieces. Changes apply immediately to the calculator.
+              </p>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!hasModified}
+                  className="gap-1.5"
+                  data-testid="button-reset-rules"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Reset {activeGroupMeta?.label} rules to defaults?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will revert all rules for{" "}
+                    {activeGroupMeta?.label?.toLowerCase()} to their original
+                    industry-standard values. Any adjustments will be lost.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => resetMutation.mutate()}
+                    data-testid="button-confirm-reset"
+                  >
+                    Reset
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
-          <div className="border rounded-lg divide-y divide-border/50">
-            {group.rules.map((rule) => (
-              <RuleRow
-                key={rule.key}
-                rule={rule}
-                defaultValue={DEFAULTS[rule.key]}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
 
-      {/* Footer note */}
-      <p className="text-[10px] text-muted-foreground/40 text-center pt-4">
-        Values persist in the database. Click a value to type directly, or drag
-        the slider.
-      </p>
+          {/* Rule sections */}
+          {grouped.map((group) => (
+            <section key={group.key} data-testid={`section-${group.key}`}>
+              <div className="mb-3">
+                <h2 className="text-xs uppercase tracking-[0.2em] font-medium text-muted-foreground">
+                  {group.label}
+                </h2>
+                <p className="text-[11px] text-muted-foreground/60 mt-0.5">
+                  {group.description}
+                </p>
+              </div>
+              <div className="border rounded-lg divide-y divide-border/50">
+                {group.rules.map((rule) => (
+                  <RuleRow
+                    key={`${activeGroup}-${rule.key}`}
+                    rule={rule}
+                    groupId={activeGroup}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+
+          {rules.length === 0 && !isLoading && (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No rules configured for this group.
+            </p>
+          )}
+
+          {/* Footer note */}
+          <p className="text-[10px] text-muted-foreground/40 text-center pt-4">
+            Each piece type has its own independent rule set. Click a value to
+            type directly, or drag the slider.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

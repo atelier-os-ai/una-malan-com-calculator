@@ -1,8 +1,8 @@
-// COM Calculation Engine v4.3 — Industry-Standard Surface Area Method
-// with live-configurable rules from the database.
+// COM Calculation Engine v4.4 — Industry-Standard Surface Area Method
+// with live-configurable rules per piece type group from the database.
 //
 // All constants are read from an EngineRulesMap passed into the calculation.
-// The Rules page allows the upholsterer to adjust these values live.
+// The Rules page allows the upholsterer to adjust these values per piece type.
 
 // ─── Rule Defaults (fallback when rules haven't loaded yet) ─────
 const DEFAULTS: Record<string, number> = {
@@ -15,6 +15,12 @@ const DEFAULTS: Record<string, number> = {
   SKIRT_PLEAT_MULTIPLIER: 1.5,
   WELT_BIAS_YIELD_FT_PER_YD: 78,
   WELT_MIN_YARDS: 0.5,
+  // Per-group utilization (new key names)
+  UTILIZATION: 0.70,
+  UTIL_TIGHT_TIGHT: 0.55,
+  UTIL_LOOSE_TIGHT: 0.74,
+  UTIL_LOOSE_LOOSE: 0.62,
+  // Legacy compat keys (mapped in buildRulesMap)
   CHAIR_UTILIZATION: 0.78,
   DINING_CHAIR_UTILIZATION: 0.70,
   SOFA_UTIL_TT: 0.55,
@@ -96,9 +102,14 @@ function isSofaSize(pieceType: string, W: number): boolean {
 }
 
 function sofaUtilization(seatType: string, backType: string, rules: EngineRulesMap): number {
-  if (seatType === 'tight' && backType === 'tight') return R(rules, 'SOFA_UTIL_TT');
-  if (seatType === 'loose' && backType === 'loose') return R(rules, 'SOFA_UTIL_LL');
-  return R(rules, 'SOFA_UTIL_LT');
+  // New per-group keys take priority; fall back to legacy keys
+  if (seatType === 'tight' && backType === 'tight') {
+    return rules['UTIL_TIGHT_TIGHT'] ?? R(rules, 'SOFA_UTIL_TT');
+  }
+  if (seatType === 'loose' && backType === 'loose') {
+    return rules['UTIL_LOOSE_LOOSE'] ?? R(rules, 'SOFA_UTIL_LL');
+  }
+  return rules['UTIL_LOOSE_TIGHT'] ?? R(rules, 'SOFA_UTIL_LT');
 }
 
 // ─── Panel Enumeration ──────────────────────────────────────────
@@ -370,11 +381,16 @@ function calculateSinglePiece(config: COMConfig, pieceType: string, rules: Engin
   const pieces = enumeratePanels(config, pieceType, rules);
 
   const sofa = isSofaSize(pieceType, config.W);
-  const utilization = sofa
-    ? sofaUtilization(config.seatType, config.backType, rules)
-    : pieceType === 'dining_chair'
-      ? R(rules, 'DINING_CHAIR_UTILIZATION')
-      : R(rules, 'CHAIR_UTILIZATION');
+  // Per-group rules: 'UTILIZATION' is the primary key; sofa-family groups
+  // also have TT/LT/LL variants that override based on seat/back type.
+  let utilization: number;
+  if (sofa && (rules['UTIL_TIGHT_TIGHT'] !== undefined || rules['SOFA_UTIL_TT'] !== undefined)) {
+    utilization = sofaUtilization(config.seatType, config.backType, rules);
+  } else {
+    // Non-sofa or group without TT/LT/LL variants → use the single UTILIZATION key
+    utilization = rules['UTILIZATION']
+      ?? (pieceType === 'dining_chair' ? R(rules, 'DINING_CHAIR_UTILIZATION') : R(rules, 'CHAIR_UTILIZATION'));
+  }
 
   const totalArea = sumArea(pieces);
   const rawYards = areaToYards(totalArea, fabricWidth, utilization);
