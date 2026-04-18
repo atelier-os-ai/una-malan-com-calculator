@@ -8,6 +8,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import CalculatorPage from "@/pages/calculator";
 import LibraryPage from "@/pages/library";
+import RulesPage from "@/pages/rules";
 import SettingsPage from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 
@@ -16,6 +17,7 @@ function AppRouter() {
     <Switch>
       <Route path="/" component={CalculatorPage} />
       <Route path="/library" component={LibraryPage} />
+      <Route path="/rules" component={RulesPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>

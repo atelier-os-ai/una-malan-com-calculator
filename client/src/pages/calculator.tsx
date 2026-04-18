@@ -1,11 +1,11 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { calculateCOM, type COMConfig, type COMResult } from "@/lib/comEngine";
+import { calculateCOM, buildRulesMap, type COMConfig, type COMResult } from "@/lib/comEngine";
 import { getSettings } from "@/pages/settings";
-import type { Piece } from "@shared/schema";
+import type { Piece, EngineRule } from "@shared/schema";
 
 // Shared load-piece signal: set by Library, consumed by Calculator
 let _pendingLoadId: number | null = null;
@@ -455,6 +455,15 @@ export default function CalculatorPage() {
     return cfg;
   }, [form]);
 
+  // Fetch live rules from backend — always refetch when Calculator mounts
+  // so changes made on the Rules page are picked up immediately
+  const { data: rulesData } = useQuery<EngineRule[]>({
+    queryKey: ["/api/rules"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const rulesMap = useMemo(() => buildRulesMap(rulesData ?? []), [rulesData]);
+
   // Calculate result
   const result: COMResult = useMemo(() => {
     const engineType = getEnginePieceType(form.type);
@@ -462,9 +471,10 @@ export default function CalculatorPage() {
       engineConfig,
       engineType,
       form.returnLength,
-      form.chaiseLength
+      form.chaiseLength,
+      rulesMap
     );
-  }, [engineConfig, form.type, form.returnLength, form.chaiseLength]);
+  }, [engineConfig, form.type, form.returnLength, form.chaiseLength, rulesMap]);
 
   // Per-component breakdown
   const breakdown = useMemo(() => computeComponentBreakdown(form, result), [form, result]);

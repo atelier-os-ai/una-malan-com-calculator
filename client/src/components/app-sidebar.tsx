@@ -1,4 +1,4 @@
-import { Calculator, Archive, Settings } from "lucide-react";
+import { Calculator, Archive, Settings, SlidersHorizontal } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -15,6 +15,7 @@ import {
 const items = [
   { title: "COM Calculator", url: "/", icon: Calculator },
   { title: "Pieces Library", url: "/library", icon: Archive },
+  { title: "Rules", url: "/rules", icon: SlidersHorizontal },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
@@ -71,7 +72,7 @@ export function AppSidebar() {
             Fabric Yardage Tool
           </p>
           <p className="text-[9px] text-muted-foreground/50">
-            v4.2 — Industry-standard surface area method
+            v4.3 — Industry-standard surface area method
           </p>
         </div>
       </SidebarFooter>

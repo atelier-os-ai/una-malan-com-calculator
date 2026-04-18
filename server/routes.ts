@@ -7,7 +7,10 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Get all saved pieces
+  // Seed rules on startup
+  await storage.seedRulesIfEmpty();
+
+  // ─── Pieces ──────────────────────────────────────────────────
   app.get("/api/pieces", async (_req, res) => {
     try {
       const allPieces = await storage.getAllPieces();
@@ -17,7 +20,6 @@ export async function registerRoutes(
     }
   });
 
-  // Get a single piece
   app.get("/api/pieces/:id", async (req, res) => {
     try {
       const piece = await storage.getPiece(Number(req.params.id));
@@ -30,7 +32,6 @@ export async function registerRoutes(
     }
   });
 
-  // Create a new piece
   app.post("/api/pieces", async (req, res) => {
     try {
       const parsed = insertPieceSchema.parse(req.body);
@@ -41,13 +42,47 @@ export async function registerRoutes(
     }
   });
 
-  // Delete a piece
   app.delete("/api/pieces/:id", async (req, res) => {
     try {
       await storage.deletePiece(Number(req.params.id));
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ message: "Failed to delete piece" });
+    }
+  });
+
+  // ─── Engine Rules ────────────────────────────────────────────
+  app.get("/api/rules", async (_req, res) => {
+    try {
+      const rules = await storage.getAllRules();
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch rules" });
+    }
+  });
+
+  app.patch("/api/rules/:key", async (req, res) => {
+    try {
+      const { value } = req.body;
+      if (typeof value !== "number") {
+        return res.status(400).json({ message: "Value must be a number" });
+      }
+      const updated = await storage.updateRule(req.params.key, value);
+      if (!updated) {
+        return res.status(404).json({ message: "Rule not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update rule" });
+    }
+  });
+
+  app.post("/api/rules/reset", async (_req, res) => {
+    try {
+      const rules = await storage.resetRules();
+      res.json(rules);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to reset rules" });
     }
   });
 
