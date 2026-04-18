@@ -92,9 +92,16 @@ function formatValue(rule: EngineRule, val: number): string {
   if (rule.unit === "×") {
     return `${val.toFixed(1)}×`;
   }
-  if (Number.isInteger(val)) return `${val}`;
-  if (rule.step >= 1) return `${Math.round(val)}`;
-  return `${val}`;
+  let numStr: string;
+  if (Number.isInteger(val)) numStr = `${val}`;
+  else if (rule.step >= 1) numStr = `${Math.round(val)}`;
+  else numStr = `${val}`;
+
+  // Append unit suffix
+  if (rule.unit === "in") return `${numStr}"`;
+  if (rule.unit === "yds") return `${numStr} yds`;
+  if (rule.unit === "ft/yd") return `${numStr} ft/yd`;
+  return numStr;
 }
 
 function formatWaste(val: number): string {
