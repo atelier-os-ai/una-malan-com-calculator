@@ -1,4 +1,4 @@
-// COM Calculation Engine v4.1 — Industry-Standard Surface Area Method
+// COM Calculation Engine v4.2 — Industry-Standard Surface Area Method
 // Validated against high-end manufacturer COM specs (April 2026)
 //
 // Calculates yardage by:
@@ -38,6 +38,15 @@ const TUCK = 6;        // 6" tuck-in for panels tucked into crevices
 const WRAP = 2;        // 2" wrap-around for panels that wrap over edges
 const ARM_WIDTH = 8;   // standard arm panel width
 const SKIRT_DROP = 8;  // standard skirt drop height
+const SKIRT_HEM = 2;   // hem + turn-under allowance for skirt bottom
+const SKIRT_PLEAT_MULTIPLIER = 1.5; // kick pleat (most common high-end)
+// Pleat multipliers: kick=1.5, box=2.5, gathered=2.5-3.0, straight/banded=1.1
+// We default to kick pleat as it's standard for high-end French furniture.
+
+// Welting: bias-cut strips from 54" fabric yield ~78 linear feet per yard.
+// Minimum 0.5 yards for any welted piece (practical cutting floor).
+const WELT_BIAS_YIELD_FT_PER_YD = 78; // linear feet of bias-cut welt per yard of 54" fabric
+const WELT_MIN_YARDS = 0.5; // minimum practical welting yardage
 
 // Utilization rates: the fraction of fabric bolt area that becomes usable cut pieces.
 // Sofa panels are often wider than the 54" bolt, requiring seaming with significant waste.
@@ -210,30 +219,11 @@ function enumeratePanels(config: COMConfig, pieceType: string = 'chair'): CutPie
     });
   }
 
-  // SKIRT
-  if (skirt) {
-    pieces.push({
-      name: 'Skirt Front',
-      cutW: W + 6 + SEAM * 2,
-      cutH: SKIRT_DROP + SEAM * 2,
-      qty: 1,
-      category: 'body',
-    });
-    pieces.push({
-      name: 'Skirt Back',
-      cutW: W + 6 + SEAM * 2,
-      cutH: SKIRT_DROP + SEAM * 2,
-      qty: 1,
-      category: 'body',
-    });
-    pieces.push({
-      name: 'Skirt Side',
-      cutW: D + 6 + SEAM * 2,
-      cutH: SKIRT_DROP + SEAM * 2,
-      qty: 2,
-      category: 'body',
-    });
-  }
+  // SKIRT — calculated separately as strip-cut yardage, NOT as area panels.
+  // Skirts are cut as strips across the bolt width. The pleat style multiplies
+  // the perimeter of fabric needed. This is added as direct yardage later,
+  // not run through the area → utilization formula.
+  // (See calculateSkirtYardage function below)
 
   // ─── DINING CHAIR EXTRA PANELS ─────────────────────────────
   // Dining chairs have upholstered side rails (left/right apron panels between legs)
@@ -416,6 +406,96 @@ function roundToHalfYard(yards: number): number {
   return Math.ceil(yards * 2) / 2;
 }
 
+// ─── Skirt Yardage (strip-cutting method) ───────────────────────
+// Skirts are cut as horizontal strips from the bolt. The pleat style
+// determines how much extra linear fabric is needed beyond the raw perimeter.
+// Method: perimeter × pleat_multiplier → divide by fabric_width → count cuts
+// → multiply by cut_height → convert to yards.
+//
+// Industry references:
+//   Kim's Upholstery: kick pleat adds ~2 yds to a sofa
+//   StitchDesk: box pleat sofa 3-3.5 yds, gathered 3.75-5 yds
+//   Fabric Resource: "with skirt + 1 yard" for chair ottoman
+
+function calculateSkirtYardage(config: COMConfig, fabricWidth: number): number {
+  if (!config.skirt) return 0;
+  const { W, D } = config;
+  const perimeter = 2 * (W + D); // full 4-sided perimeter
+  const pleatPerimeter = perimeter * SKIRT_PLEAT_MULTIPLIER;
+  const cutHeight = SKIRT_DROP + SKIRT_HEM + SEAM * 2; // drop + hem + top/bottom seams
+  const numCuts = Math.ceil(pleatPerimeter / fabricWidth);
+  return (numCuts * cutHeight) / 36;
+}
+
+// ─── Welting Yardage (bias-cut strip method) ────────────────────
+// Welting is cut as bias strips from the fabric. The total linear footage
+// of welting depends on which seams are welted.
+//
+// Industry references (StitchDesk):
+//   Sofa (full welt): 25-35 linear feet → 0.32-0.45 yds bias-cut
+//   Chair: 12-18 linear feet → 0.15-0.23 yds bias-cut
+//   Dining chair: 3-6 linear feet → practical minimum 0.5 yds
+//   Chameleon Style: "3/4 of a yard gives you 15 yards of welting"
+//   Minimum practical: 0.5 yds (can't efficiently bias-cut from less)
+//
+// For sofa-size pieces: welting is already baked into the calibrated
+// utilization rates (manufacturer specs include welting). So we only
+// apply a credit when welting is toggled OFF.
+
+function calculateWeltingYardage(
+  config: COMConfig, pieceType: string, sofa: boolean
+): number {
+  if (!config.welting) {
+    // For sofas: return a negative credit when welting is off
+    if (sofa) {
+      const weltScale = Math.max(config.W, 20) / 84;
+      return -(0.5 * weltScale);
+    }
+    return 0;
+  }
+
+  // For sofa-size pieces: welting is baked into utilization, no addition
+  if (sofa) return 0;
+
+  // For chair-size pieces: calculate actual welting linear footage
+  const { W, D, H, seatHeight, arms } = config;
+  const backH = H - seatHeight;
+
+  // Welted seam locations vary by piece type:
+  // - Seat border (perimeter of seat/deck)
+  // - Back border (perimeter of back panel)
+  // - Arm seams (if arms present)
+  let weltLinearInches = 0;
+
+  if (pieceType === 'dining_chair') {
+    // Dining chair: seat perimeter + back panel border
+    const seatPerim = 2 * (W + (D - 6)); // front/back + sides of seat
+    const backBorder = 2 * W + 2 * backH; // around the back panel
+    weltLinearInches = seatPerim + backBorder;
+    if (arms) {
+      weltLinearInches += 2 * (D - 6 + backH); // arm seam lines × 2
+    }
+  } else {
+    // Lounge chair / other: seat + back + arm seams
+    const seatPerim = 2 * (W + (D - 6));
+    const backBorder = 2 * W + 2 * backH;
+    weltLinearInches = seatPerim + backBorder;
+    if (arms) {
+      // Arm seams: inside arm join + outside arm join + arm front border
+      weltLinearInches += 4 * (D - 4 + backH); // generous for 2 arms
+    }
+  }
+
+  const weltLinearFeet = weltLinearInches / 12;
+  const fabricWidth = config.fabricWidth || 54;
+  // Scale yield by actual fabric width vs reference 54"
+  const yieldFtPerYd = WELT_BIAS_YIELD_FT_PER_YD * (fabricWidth / 54);
+  const rawYds = weltLinearFeet / yieldFtPerYd;
+
+  // Enforce minimum — you can't practically bias-cut from less than ~0.5 yds
+  return Math.max(rawYds, WELT_MIN_YARDS);
+}
+
 // ─── Main Calculation ───────────────────────────────────────────
 
 function calculateSinglePiece(config: COMConfig, pieceType: string = 'chair'): COMResult {
@@ -433,25 +513,13 @@ function calculateSinglePiece(config: COMConfig, pieceType: string = 'chair'): C
   const totalArea = sumArea(pieces);
   const rawYards = areaToYards(totalArea, fabricWidth, utilization);
 
-  // Welting/piping logic:
-  // For sofa-size pieces, the utilization rates are calibrated WITH welting included
-  // (manufacturer COM specs that we calibrated against include welting).
-  // So welting=on is the baseline — when welting is OFF, subtract a credit.
-  // For chair-size pieces, utilization was calibrated without welting,
-  // so welting adds yardage when ON.
-  let weltingYards = 0;
-  const weltScale = Math.max(config.W, 20) / 84;
-  if (sofa) {
-    if (!config.welting) {
-      weltingYards = -(0.5 * weltScale); // credit when welting off
-    }
-  } else {
-    if (config.welting) {
-      weltingYards = 1.0 * weltScale; // add when welting on for chairs
-    }
-  }
+  // Skirt yardage: calculated via strip-cutting method (not area panels)
+  const skirtYards = calculateSkirtYardage(config, fabricWidth);
 
-  const totalRaw = rawYards + weltingYards;
+  // Welting yardage: calculated via bias-cut linear footage method
+  const weltingYards = calculateWeltingYardage(config, pieceType, sofa);
+
+  const totalRaw = rawYards + skirtYards + weltingYards;
 
   // Pattern repeat
   let patternMultiplier = 1;
@@ -540,9 +608,12 @@ function calculateSectional(config: SectionalConfig): COMResult {
 
   const totalArea = sumArea(allPieces);
   const rawYards = areaToYards(totalArea, fabricWidth, utilization);
-  const weltScale = Math.max(W + returnLength, 20) / 84;
-  const weltingYards = rest.welting ? 1.0 * weltScale : 0;
-  const totalRaw = rawYards + weltingYards;
+  // Sectional welting: baked into sofa utilization (welting=on is baseline)
+  const weltCredit = !rest.welting ? -(0.5 * Math.max(W + returnLength, 20) / 84) : 0;
+  // Sectional skirt
+  const sectionalSkirtConfig = { ...rest, W: W + returnLength, D } as COMConfig;
+  const skirtYards = calculateSkirtYardage(sectionalSkirtConfig, fabricWidth);
+  const totalRaw = rawYards + weltCredit + skirtYards;
 
   let patternMultiplier = 1;
   if (rest.patternRepeat > 0) {
@@ -614,9 +685,12 @@ function calculateChaise(config: ChaiseConfig): COMResult {
 
   const totalArea = sumArea(allPieces);
   const rawYards = areaToYards(totalArea, fabricWidth, utilization);
-  const weltScale = Math.max(W + chaiseLength, 20) / 84;
-  const weltingYards = rest.welting ? 1.0 * weltScale : 0;
-  const totalRaw = rawYards + weltingYards;
+  // Chaise welting: baked into sofa utilization (welting=on is baseline)
+  const chaiseWeltCredit = !rest.welting ? -(0.5 * Math.max(W + chaiseLength, 20) / 84) : 0;
+  // Chaise skirt
+  const chaiseSkirtConfig = { ...rest, W: W + chaiseLength, D } as COMConfig;
+  const chaiseSkirtYards = calculateSkirtYardage(chaiseSkirtConfig, fabricWidth);
+  const totalRaw = rawYards + chaiseWeltCredit + chaiseSkirtYards;
 
   let patternMultiplier = 1;
   if (rest.patternRepeat > 0) {

@@ -71,7 +71,7 @@ export function AppSidebar() {
             Fabric Yardage Tool
           </p>
           <p className="text-[9px] text-muted-foreground/50">
-            v4.1 — Industry-standard surface area method
+            v4.2 — Industry-standard surface area method
           </p>
         </div>
       </SidebarFooter>
