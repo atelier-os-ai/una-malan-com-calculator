@@ -11,6 +11,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import umLogoUrl from "@assets/um-logo.svg";
 
 const items = [
   { title: "COM Calculator", url: "/", icon: Calculator },
@@ -26,13 +27,12 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="px-6 py-6">
         <div className="flex flex-col gap-1.5">
-          <h1
-            className="font-display text-xl tracking-[0.25em] font-light"
-            style={{ color: "hsl(40 45% 55%)" }}
-            data-testid="text-brand-name"
-          >
-            UNA MALAN
-          </h1>
+          <img
+            src={umLogoUrl}
+            alt="Una Malan"
+            className="h-14 w-auto self-start"
+            data-testid="img-brand-logo"
+          />
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase tracking-[0.3em] text-muted-foreground font-medium">
               COM Calculator
@@ -72,7 +72,7 @@ export function AppSidebar() {
             Fabric Yardage Tool
           </p>
           <p className="text-[9px] text-muted-foreground/50">
-            v4.4 — Per-piece-type rules system
+            v4.5 — Logo, instructions & buffer
           </p>
         </div>
       </SidebarFooter>
