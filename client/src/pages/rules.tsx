@@ -7,7 +7,7 @@ import {
   RotateCcw, Info, Armchair, Sofa, LayoutGrid,
   RectangleHorizontal, UtensilsCrossed, Square,
   BedDouble, PanelTop, Archive, PanelBottom,
-  Heart, TreePalm,
+  Heart, TreePalm, ChevronDown, ChevronUp, BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -28,6 +28,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 // ─── Group icons ─────────────────────────────────────────────────
 const GROUP_ICONS: Record<string, any> = {
@@ -69,6 +74,11 @@ const CATEGORY_META: Record<string, { label: string; description: string }> = {
     description:
       "Extra fabric for 3D profile wrapping on tight seat/back pieces",
   },
+  buffer: {
+    label: "Yardage Buffer",
+    description:
+      "Extra yardage added on top of the calculated amount. Use this to add a cushion for pieces that need more than the formula produces.",
+  },
   piece_defaults: {
     label: "Piece Defaults",
     description:
@@ -82,6 +92,7 @@ const CATEGORY_ORDER = [
   "welting",
   "utilization",
   "tight_construction",
+  "buffer",
   "piece_defaults",
 ];
 
@@ -270,6 +281,70 @@ function RuleRow({
   );
 }
 
+// ─── Instructions Panel ──────────────────────────────────────────
+function InstructionsPanel() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button
+          className="w-full flex items-center gap-2.5 px-4 py-3 rounded-lg border border-border/50 bg-muted/30 hover:bg-muted/50 transition-colors text-left group"
+          data-testid="button-toggle-instructions"
+        >
+          <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-xs font-medium text-muted-foreground flex-1">
+            How to Use the Rules Editor
+          </span>
+          {open ? (
+            <ChevronUp className="h-3.5 w-3.5 text-muted-foreground/60" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />
+          )}
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-2 px-4 py-4 rounded-lg border border-border/40 bg-background space-y-4 text-xs text-muted-foreground leading-relaxed">
+          <div>
+            <h4 className="font-medium text-foreground mb-1">Overview</h4>
+            <p>
+              Each piece type group has its own independent set of rules that control how the COM engine calculates yardage.
+              Select a piece type on the left, then adjust any values below. Changes apply immediately to the calculator.
+            </p>
+          </div>
+          <div>
+            <h4 className="font-medium text-foreground mb-1">Adjusting Values</h4>
+            <ul className="list-disc list-inside space-y-0.5 pl-1">
+              <li>Drag the slider to change a value, or click the number on the right to type directly.</li>
+              <li>Rules marked <span className="inline-flex items-center px-1 py-0 text-[9px] uppercase tracking-wider font-medium rounded bg-primary/15 text-primary">Modified</span> have been changed from the industry-standard default.</li>
+              <li>Use the <strong>Reset</strong> button to revert all rules for the current group back to defaults.</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-medium text-foreground mb-1">Rule Categories</h4>
+            <ul className="list-disc list-inside space-y-0.5 pl-1">
+              <li><strong>Allowances</strong> — Seam, tuck-in, and wrap-around margins on every cut piece.</li>
+              <li><strong>Skirt</strong> — Drop height, hem, and pleat style for skirted pieces.</li>
+              <li><strong>Welting / Piping</strong> — Bias-cut yield and minimum yardage for welted seams.</li>
+              <li><strong>Fabric Utilization</strong> — Efficiency factor (lower % = more cutting waste). Sofa-family groups also have separate rates for Tight/Tight, Loose/Tight, and Loose/Loose configurations.</li>
+              <li><strong>Tight Construction</strong> — Extra fabric for 3D profile wrapping on tight seat/back pieces.</li>
+              <li><strong>Yardage Buffer</strong> — Extra yards added to the final total. Use this to pad pieces that need more than the formula produces based on your knowledge of the piece.</li>
+              <li><strong>Piece Defaults</strong> — Default arm count, arm length, and back style (chaise/daybed groups only). These pre-fill the calculator form.</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-medium text-foreground mb-1">Tips</h4>
+            <ul className="list-disc list-inside space-y-0.5 pl-1">
+              <li>Start with the Yardage Buffer if a piece type consistently needs more yardage — it's the simplest adjustment.</li>
+              <li>Only change Allowances or Utilization if you understand how they affect the surface-area calculation.</li>
+              <li>Each group is fully independent — changing sofa rules does not affect dining chairs or any other group.</li>
+            </ul>
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 // ─── Main Rules Page ─────────────────────────────────────────────
 export default function RulesPage() {
   const { toast } = useToast();
@@ -411,6 +486,9 @@ export default function RulesPage() {
               </AlertDialogContent>
             </AlertDialog>
           </div>
+
+          {/* Inline Instructions */}
+          <InstructionsPanel />
 
           {/* Rule sections */}
           {grouped.map((group) => (

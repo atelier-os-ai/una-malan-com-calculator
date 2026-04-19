@@ -704,6 +704,9 @@ export default function CalculatorPage() {
           <ComponentRow label="Skirt" value={breakdown.skirt} total={result.total} color="hsl(25 20% 38%)" />
         )}
         <ComponentRow label="Welting / Piping" value={breakdown.welting} total={result.total} color="hsl(20 15% 35%)" />
+        {result.bufferYards > 0 && (
+          <ComponentRow label="Yardage Buffer" value={result.bufferYards} total={result.total} color="hsl(200 30% 50%)" />
+        )}
 
         {/* Total row */}
         <div className="pt-3 border-t border-border/30">

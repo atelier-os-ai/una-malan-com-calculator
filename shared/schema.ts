@@ -258,6 +258,14 @@ const RULE_TEMPLATES: RuleTemplate[] = [
     excludeGroups: ["drawer_fronts", "outdoor_cushions", "headboard"],
   },
 
+  // ─── Yardage Buffer ───────────────────────────────────────────
+  {
+    key: "YARDAGE_BUFFER", label: "Yardage Buffer",
+    description: "Extra yardage added to the final calculation. Use this to account for piece-specific complexity that the standard formula doesn't cover.",
+    category: "buffer", unit: "yds", min: 0, max: 5, step: 0.25,
+    defaults: { _default: 0 },
+  },
+
   // ─── Chaise / Daybed Defaults ──────────────────────────────────
   // These set per-group defaults that the calculator pre-fills.
   {

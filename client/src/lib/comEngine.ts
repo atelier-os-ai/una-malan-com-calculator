@@ -29,6 +29,7 @@ const DEFAULTS: Record<string, number> = {
   TIGHT_BACK_PROFILE_PCT: 0.17,
   TIGHT_SEAT_PROFILE_MUL: 1.0,
   TIGHT_CROWN_WRAP: 4,
+  YARDAGE_BUFFER: 0,
 };
 
 export type EngineRulesMap = Record<string, number>;
@@ -71,6 +72,7 @@ export interface COMResult {
   bodyYards: number;
   armsYards: number;
   cushionYards: number;
+  bufferYards: number;
   panels: CutPiece[];
   totalSurfaceArea: number;
   wasteFactor: number;
@@ -404,7 +406,9 @@ function calculateSinglePiece(config: COMConfig, pieceType: string, rules: Engin
   }
 
   const adjusted = totalRaw * patternMultiplier;
-  const total = Math.max(roundYardage(adjusted, pieceType), 1.5);
+  const baseTotal = Math.max(roundYardage(adjusted, pieceType), 1.5);
+  const buffer = R(rules, 'YARDAGE_BUFFER');
+  const total = baseTotal + buffer;
 
   const bodyPieces = pieces.filter(p => p.category === 'body');
   const armPieces = pieces.filter(p => p.category === 'arms');
@@ -415,6 +419,7 @@ function calculateSinglePiece(config: COMConfig, pieceType: string, rules: Engin
     bodyYards: Math.round(areaToYards(sumArea(bodyPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     armsYards: Math.round(areaToYards(sumArea(armPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     cushionYards: Math.round(areaToYards(sumArea(cushionPieces), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    bufferYards: buffer,
     panels: pieces,
     totalSurfaceArea: totalArea,
     wasteFactor: 1 / utilization - 1,
@@ -491,7 +496,9 @@ function calculateSectional(config: SectionalConfig, rules: EngineRulesMap): COM
   }
 
   const adjusted = totalRaw * patternMultiplier;
-  const total = roundToHalfYard(adjusted);
+  const baseTotal = roundToHalfYard(adjusted);
+  const buffer = R(rules, 'YARDAGE_BUFFER');
+  const total = baseTotal + buffer;
 
   const bodyArr = allPieces.filter(p => p.category === 'body');
   const armArr = allPieces.filter(p => p.category === 'arms');
@@ -502,6 +509,7 @@ function calculateSectional(config: SectionalConfig, rules: EngineRulesMap): COM
     bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    bufferYards: buffer,
     panels: allPieces,
     totalSurfaceArea: totalArea,
     wasteFactor: 1 / utilization - 1,
@@ -564,7 +572,9 @@ function calculateChaise(config: ChaiseConfig, rules: EngineRulesMap): COMResult
   }
 
   const adjusted = totalRaw * patternMultiplier;
-  const total = roundToHalfYard(adjusted);
+  const baseTotal = roundToHalfYard(adjusted);
+  const buffer = R(rules, 'YARDAGE_BUFFER');
+  const total = baseTotal + buffer;
 
   const bodyArr = allPieces.filter(p => p.category === 'body');
   const armArr = allPieces.filter(p => p.category === 'arms');
@@ -575,6 +585,7 @@ function calculateChaise(config: ChaiseConfig, rules: EngineRulesMap): COMResult
     bodyYards: Math.round(areaToYards(sumArea(bodyArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     armsYards: Math.round(areaToYards(sumArea(armArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
     cushionYards: Math.round(areaToYards(sumArea(cushArr), fabricWidth, utilization) * patternMultiplier * 100) / 100,
+    bufferYards: buffer,
     panels: allPieces,
     totalSurfaceArea: totalArea,
     wasteFactor: 1 / utilization - 1,
