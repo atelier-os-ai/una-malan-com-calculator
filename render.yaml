@@ -2,6 +2,7 @@ services:
   - type: web
     name: una-malan-com-calculator
     runtime: node
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run start
     envVars:
